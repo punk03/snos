@@ -5,7 +5,7 @@ import logging
 import json
 import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List, Union, Callable
+from typing import Dict, Any, Optional, List, Union, Callable, Tuple
 
 from telebot.async_telebot import AsyncTeleBot
 from telebot.types import Message, CallbackQuery
@@ -19,6 +19,7 @@ from app.utils.payment_manager import payment_manager
 from app.utils.validators import validate_message_url
 from app.utils.localization import i18n
 from app.keyboards.ui_keyboards import KeyboardBuilder
+from app.utils.promo_manager import promo_manager
 
 logger = logging.getLogger(__name__)
 
@@ -304,42 +305,42 @@ _{config.bot_name}_ - это инструмент для отправки мас
     
     async def process_message(self, message: Message, bot: AsyncTeleBot):
         """
-        Обработчик текстовых сообщений
+        Обработчик текстовых сообщений от пользователя
         
         Args:
             message: Объект сообщения
             bot: Экземпляр бота
         """
-        # Если это команда, игнорируем
-        if message.text.startswith('/'):
-                return
-            
         user_id = message.from_user.id
+        text = message.text
         
-        # Проверяем/добавляем пользователя
-        await self.check_user(user_id, message)
+        # Проверяем/добавляем пользователя и обновляем активность
+        await self.check_user(user_id, message, update_info=True)
+        
+        # Получаем текущее состояние пользователя
+        user_state = self.user_states.get(user_id)
         
         # Получаем язык пользователя
         lang = i18n.get_user_language(user_id)
         
-        # Проверяем состояние пользователя
-        user_state = self.user_states.get(user_id)
-        
+        # Если пользователь не в состоянии, это обычное сообщение
+        if not user_state:
+            return
+            
         # Если пользователь в режиме BotNet
         if user_state == "botnet":
-            # Проверяем подписку
-            subscription_date = db.get_subscription_date(user_id)
-            if not subscription_date or datetime.strptime(subscription_date, "%Y-%m-%d %H:%M:%S") < datetime.now():
+            # Проверяем доступность функционала (подписка или промокоды)
+            has_access, error_message = await self.check_payment_system(user_id)
+            if not has_access:
                 await self.safe_send_message(
                     chat_id=user_id,
-                    text=i18n.get_text("botnet_no_subscription", lang),
-                    parse_mode="Markdown", 
-                    reply_markup=KeyboardBuilder.shop_menu()
+                    text=error_message,
+                    parse_mode="Markdown"
                 )
                 # Сбрасываем состояние
                 self.user_states.pop(user_id, None)
                 return
-                
+            
             # Проверяем кулдаун
             cooldown = self.cooldowns.get(user_id)
             if cooldown and cooldown > datetime.now():
@@ -352,7 +353,7 @@ _{config.bot_name}_ - это инструмент для отправки мас
                     reply_markup=KeyboardBuilder.back_button()
                 )
                 return
-                
+            
             # Проверяем ссылку
             is_valid, message_info = validate_message_url(message.text)
             if not is_valid:
@@ -386,56 +387,77 @@ _{config.bot_name}_ - это инструмент для отправки мас
                 max_sessions=max_sessions
             )
             
-            # Проверяем наличие ошибок
-            if "error" in stats:
-                error_code = stats["error"]
-                if error_code == "already_running":
-                    await self.safe_send_message(
+            # Если включен режим только промокодов, списываем 1 снос
+            is_promo_only_mode = promo_manager.is_promo_only_mode()
+            if is_promo_only_mode:
+                # Списываем 1 снос с баланса пользователя
+                promo_manager.use_reports(user_id, 1)
+            
+            # Проверяем результат
+            if stats.get("error"):
+                error_code = stats.get("error")
+                
+                if error_code == "invalid_url":
+                    await self.safe_edit_message(
                         chat_id=user_id,
-                        text=i18n.get_text("botnet_already_running", lang),
-                        parse_mode="Markdown",
-                        reply_markup=KeyboardBuilder.back_button()
-                    )
-                elif error_code == "invalid_url":
-                    await self.safe_send_message(
-                        chat_id=user_id,
+                        message_id=processing_msg.message_id,
                         text=i18n.get_text("botnet_invalid_url", lang),
                         parse_mode="Markdown",
                         reply_markup=KeyboardBuilder.back_button()
                     )
                 elif error_code == "no_sessions":
-                    await self.safe_send_message(
+                    await self.safe_edit_message(
                         chat_id=user_id,
+                        message_id=processing_msg.message_id,
                         text=i18n.get_text("botnet_no_sessions", lang),
                         parse_mode="Markdown",
                         reply_markup=KeyboardBuilder.back_button()
                     )
                 else:
-                    await self.safe_send_message(
+                    await self.safe_edit_message(
                         chat_id=user_id,
-                        text=i18n.get_text("error", lang, error_code),
+                        message_id=processing_msg.message_id,
+                        text=i18n.get_text("botnet_error", lang),
                         parse_mode="Markdown",
                         reply_markup=KeyboardBuilder.back_button()
                     )
-                return
+            else:
+                # Устанавливаем кулдаун для пользователя
+                cooldown_minutes = config.COOLDOWN_MINUTES
+                self.cooldowns[user_id] = datetime.now() + timedelta(minutes=cooldown_minutes)
+                
+                # Получаем подробную статистику
+                valid_reports = stats.get("valid", 0)
+                invalid_reports = stats.get("invalid", 0)
+                flood_reports = stats.get("flood", 0)
+                total_reports = stats.get("total", 0)
+                
+                # Логируем операцию в базу данных
+                db.log_operation(
+                    user_id=user_id,
+                    operation_type="botnet_report",
+                    target=message.text,
+                    result=json.dumps(stats)
+                )
+                
+                # Отправляем отчет пользователю
+                bot_result_text = i18n.get_text("botnet_result", lang, valid_reports, invalid_reports, flood_reports, total_reports)
+                
+                # Если пользователь в режиме только промокодов, добавляем информацию об оставшихся сносах
+                if is_promo_only_mode:
+                    reports_left = promo_manager.check_reports_left(user_id)
+                    bot_result_text += "\n\n" + i18n.get_text("botnet_reports_left", lang, reports_left)
+                
+                await self.safe_edit_message(
+                    chat_id=user_id,
+                    message_id=processing_msg.message_id,
+                    text=bot_result_text,
+                    parse_mode="Markdown",
+                    reply_markup=KeyboardBuilder.back_button()
+                )
             
-            # Устанавливаем кулдаун
-            self.cooldowns[user_id] = datetime.now() + timedelta(minutes=config.COOLDOWN_MINUTES)
-            
-            # Отправляем результат
-            await self.safe_edit_message(
-                chat_id=user_id,
-                message_id=processing_msg.message_id,
-                text=i18n.get_text("botnet_result", lang, 
-                                  stats["valid"], stats["invalid"], stats["flood"]),
-                parse_mode="Markdown",
-                reply_markup=KeyboardBuilder.back_button()
-            )
-            
-            # Сбрасываем состояние и настройки
+            # Сбрасываем состояние пользователя
             self.user_states.pop(user_id, None)
-            self.user_report_settings.pop(user_id, {})
-            return
     
     async def cb_profile(self, call: CallbackQuery):
         """
@@ -451,7 +473,7 @@ _{config.bot_name}_ - это инструмент для отправки мас
     
     async def cb_shop(self, call: CallbackQuery):
         """
-        Обработчик callback для магазина
+        Обработчик callback для открытия магазина подписок
         
         Args:
             call: Объект callback
@@ -461,7 +483,21 @@ _{config.bot_name}_ - это инструмент для отправки мас
         # Получаем язык пользователя
         lang = i18n.get_user_language(user_id)
         
-        # Показываем магазин
+        # Проверяем, не отключена ли система оплаты
+        is_payment_disabled = promo_manager.is_payment_disabled()
+        
+        if is_payment_disabled:
+            # Если система оплаты отключена, показываем соответствующее сообщение
+            await self.safe_edit_message(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=i18n.get_text("payment_disabled", lang),
+                parse_mode="Markdown",
+                reply_markup=KeyboardBuilder.back_button()
+            )
+            return
+        
+        # Отправляем магазин
         await self.safe_edit_message(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
@@ -1107,4 +1143,59 @@ _{config.bot_name}_ - это инструмент для отправки мас
                 text=stats_text,
                 parse_mode="Markdown", 
                 reply_markup=KeyboardBuilder.back_button()
-            ) 
+            )
+
+    async def check_user_subscription(self, user_id: int) -> bool:
+        """
+        Проверка подписки пользователя
+        
+        Args:
+            user_id: ID пользователя
+            
+        Returns:
+            bool: Активна ли подписка
+        """
+        # Получаем дату подписки
+        subscription_date = db.get_subscription_date(user_id)
+        if not subscription_date:
+            return False
+            
+        # Проверяем, не истекла ли подписка
+        try:
+            sub_date = datetime.strptime(subscription_date, "%Y-%m-%d %H:%M:%S")
+            return sub_date > datetime.now()
+        except:
+            return False
+
+    async def check_payment_system(self, user_id: int) -> Tuple[bool, Optional[str]]:
+        """
+        Проверка доступа к функционалу в зависимости от режима работы системы
+        
+        Args:
+            user_id: ID пользователя
+            
+        Returns:
+            Tuple[bool, Optional[str]]: (Есть ли доступ, Сообщение об ошибке)
+        """
+        # Получаем язык пользователя
+        lang = i18n.get_user_language(user_id)
+        
+        # Проверяем режим работы системы - только через промокоды
+        is_promo_only_mode = promo_manager.is_promo_only_mode()
+        
+        if is_promo_only_mode:
+            # Проверяем количество доступных сносов у пользователя
+            reports_left = promo_manager.check_reports_left(user_id)
+            
+            if reports_left <= 0:
+                # У пользователя нет доступных сносов
+                return False, i18n.get_text("botnet_no_reports_left", lang)
+            
+            return True, None
+        else:
+            # Проверяем подписку в обычном режиме
+            has_subscription = await self.check_user_subscription(user_id)
+            if not has_subscription:
+                return False, i18n.get_text("botnet_no_subscription", lang)
+            
+            return True, None 

@@ -219,6 +219,7 @@ class KeyboardBuilder:
             buttons.extend([
                 {"text": "Выдать подписку", "callback_data": "add_subsribe", "icon": "plus"},
                 {"text": "Забрать подписку", "callback_data": "clear_subscribe", "icon": "minus"},
+                {"text": "Промокоды", "callback_data": "admin_promos", "icon": "gift"},
             ])
         
         # Полный админ (уровень 3)

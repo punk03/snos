@@ -35,6 +35,7 @@ class LocalizationManager:
                 "subscription_buy": "Купить подписку",
                 "subscription_renew": "Продлить подписку",
                 "subscription_plan": "Тарифный план: {}",
+                "payment_disabled": "❌ Система покупки подписок отключена. Для получения доступа к функционалу обратитесь к администратору для приобретения промокода с количеством сносов.",
                 
                 # Тексты для статистики
                 "stats_title": "📊 Общая статистика",
@@ -86,7 +87,19 @@ class LocalizationManager:
                 "promo_invalid": "❌ Недействительный промокод",
                 "referral_title": "👥 Реферальная программа",
                 "referral_link": "Ваша реферальная ссылка: {}",
-                "referral_stats": "Приглашено пользователей: {}\nПолучено вознаграждений: {} дней"
+                "referral_stats": "Приглашено пользователей: {}\nПолучено вознаграждений: {} дней",
+                
+                # Тексты для системы промокодов с количеством сносов
+                "botnet_no_reports_left": "❌ У вас нет доступных сносов. Обратитесь к администратору для приобретения промокода.",
+                "botnet_reports_left": "📊 Остаток сносов: {}",
+                "botnet_result": "✅ Жалобы успешно отправлены!\n\n✅ Успешно: {}\n❌ Неудачно: {}\n⚠️ Флуд: {}\n📄 Всего: {}",
+                "botnet_processing": "⏳ Обрабатываем вашу заявку...",
+                "botnet_no_subscription": "❌ У вас нет активной подписки. Пожалуйста, приобретите подписку для использования функций бота.",
+                "botnet_cooldown": "⏳ Пожалуйста, подождите {} минут перед следующей отправкой",
+                "botnet_invalid_url": "❌ Неверная ссылка на сообщение. Пожалуйста, отправьте корректную ссылку.",
+                "botnet_no_sessions": "❌ В данный момент нет доступных сессий для отправки жалоб. Попробуйте позже.",
+                "botnet_error": "❌ Произошла ошибка при отправке жалоб. Пожалуйста, попробуйте позже.",
+                "botnet_reason_selected": "✅ Выбрана причина: {}.\n\nТеперь выберите интенсивность отправки:"
             },
             
             # Английский язык
@@ -108,6 +121,7 @@ class LocalizationManager:
                 "subscription_buy": "Buy subscription",
                 "subscription_renew": "Renew subscription",
                 "subscription_plan": "Subscription plan: {}",
+                "payment_disabled": "❌ Subscription purchase system is disabled. To access functionality, please contact an administrator to purchase a promo code with reports.",
                 
                 # Тексты для статистики
                 "stats_title": "📊 General Statistics",
@@ -159,7 +173,19 @@ class LocalizationManager:
                 "promo_invalid": "❌ Invalid promo code",
                 "referral_title": "👥 Referral Program",
                 "referral_link": "Your referral link: {}",
-                "referral_stats": "Invited users: {}\nRewards received: {} days"
+                "referral_stats": "Invited users: {}\nRewards received: {} days",
+                
+                # Тексты для системы промокодов с количеством сносов
+                "botnet_no_reports_left": "❌ You don't have any reports left. Please contact an administrator to purchase a promo code.",
+                "botnet_reports_left": "📊 Reports left: {}",
+                "botnet_result": "✅ Reports successfully sent!\n\n✅ Successful: {}\n❌ Failed: {}\n⚠️ Flood: {}\n📄 Total: {}",
+                "botnet_processing": "⏳ Processing your request...",
+                "botnet_no_subscription": "❌ You don't have an active subscription. Please purchase a subscription to use bot features.",
+                "botnet_cooldown": "⏳ Please wait {} minutes before next report",
+                "botnet_invalid_url": "❌ Invalid message link. Please send a correct link.",
+                "botnet_no_sessions": "❌ No sessions available for sending reports. Please try again later.",
+                "botnet_error": "❌ An error occurred while sending reports. Please try again later.",
+                "botnet_reason_selected": "✅ Selected reason: {}.\n\nNow select reporting intensity:"
             }
         }
         

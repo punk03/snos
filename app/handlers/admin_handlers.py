@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Union, Callable
 
 from telebot.async_telebot import AsyncTeleBot
-from telebot.types import Message, CallbackQuery, InlineKeyboardMarkup
+from telebot.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 import config
 from app.handlers.base_handler import BaseHandler
@@ -16,6 +16,7 @@ from app.database.db import db
 from app.utils.session_manager import session_manager
 from app.utils.localization import i18n
 from app.keyboards.ui_keyboards import KeyboardBuilder
+from app.utils.promo_manager import promo_manager
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +27,9 @@ class AdminHandlers(BaseHandler):
         """
         Инициализация обработчика администратора
     
-    Args:
-        bot: Экземпляр бота
-    """
+        Args:
+            bot: Экземпляр бота
+        """
         super().__init__(bot)
         # Словарь состояний администраторов
         self.admin_states = {}
@@ -91,7 +92,7 @@ class AdminHandlers(BaseHandler):
         
         if not is_admin:
             # Если не админ, игнорируем команду
-                return
+            return
             
         # Логируем команду
         await self.log_command(user_id, 'admin')
@@ -344,6 +345,149 @@ class AdminHandlers(BaseHandler):
                 parse_mode="Markdown", 
                 reply_markup=confirm_button
             )
+            
+        elif state == "create_reports_promo_count":
+            # Обработка ввода количества сносов для промокода
+            try:
+                reports_count = int(text)
+                
+                # Проверяем валидность количества сносов
+                min_reports = config.PROMO_SYSTEM.get("reports_per_promo", {}).get("min", 10)
+                max_reports = config.PROMO_SYSTEM.get("reports_per_promo", {}).get("max", 10000)
+                
+                if reports_count < min_reports:
+                    await self.safe_send_message(
+                        chat_id=user_id,
+                        text=f"❌ Минимальное количество сносов: {min_reports}",
+                        parse_mode="Markdown"
+                    )
+                    return
+                
+                if reports_count > max_reports:
+                    await self.safe_send_message(
+                        chat_id=user_id,
+                        text=f"❌ Максимальное количество сносов: {max_reports}",
+                        parse_mode="Markdown"
+                    )
+                    return
+                
+                # Сохраняем количество сносов
+                self.admin_data[user_id]["reports_count"] = reports_count
+                
+                # Переходим к следующему шагу - ввод количества использований
+                self.admin_states[user_id] = "create_reports_promo_usages"
+                
+                # Запрашиваем количество использований
+                await self.safe_send_message(
+                    chat_id=user_id,
+                    text="Введите максимальное количество использований промокода:",
+                    parse_mode="Markdown"
+                )
+                
+            except ValueError:
+                await self.safe_send_message(
+                    chat_id=user_id,
+                    text="❌ Введите корректное число для количества сносов",
+                    parse_mode="Markdown"
+                )
+                
+        elif state == "create_reports_promo_usages":
+            # Обработка ввода максимального количества использований промокода
+            try:
+                max_usages = int(text)
+                
+                # Проверяем валидность количества использований
+                if max_usages <= 0:
+                    await self.safe_send_message(
+                        chat_id=user_id,
+                        text="❌ Количество использований должно быть положительным числом",
+                        parse_mode="Markdown"
+                    )
+                    return
+                
+                # Сохраняем количество использований
+                self.admin_data[user_id]["max_usages"] = max_usages
+                
+                # Переходим к следующему шагу - ввод срока действия
+                self.admin_states[user_id] = "create_reports_promo_expires"
+                
+                # Запрашиваем срок действия
+                await self.safe_send_message(
+                    chat_id=user_id,
+                    text="Введите срок действия промокода в днях (0 - бессрочный):",
+                    parse_mode="Markdown"
+                )
+                
+            except ValueError:
+                await self.safe_send_message(
+                    chat_id=user_id,
+                    text="❌ Введите корректное число для количества использований",
+                    parse_mode="Markdown"
+                )
+                
+        elif state == "create_reports_promo_expires":
+            # Обработка ввода срока действия промокода
+            try:
+                expires_days = int(text)
+                
+                # Проверяем валидность срока действия
+                if expires_days < 0:
+                    await self.safe_send_message(
+                        chat_id=user_id,
+                        text="❌ Срок действия не может быть отрицательным",
+                        parse_mode="Markdown"
+                    )
+                    return
+                
+                # Создаем промокод
+                reports_count = self.admin_data[user_id].get("reports_count")
+                max_usages = self.admin_data[user_id].get("max_usages")
+                
+                promo_code = promo_manager.generate_reports_promo(
+                    reports_count=reports_count,
+                    max_usages=max_usages,
+                    expires_days=expires_days,
+                    created_by_admin_id=user_id
+                )
+                
+                if promo_code:
+                    # Сбрасываем состояние
+                    self.admin_states.pop(user_id, None)
+                    self.admin_data.pop(user_id, None)
+                    
+                    # Формируем сообщение об успешном создании промокода
+                    message_text = f"✅ Промокод успешно создан!\n\n"
+                    message_text += f"📝 **Промокод:** `{promo_code}`\n"
+                    message_text += f"🔢 **Количество сносов:** {reports_count}\n"
+                    message_text += f"📊 **Макс. использований:** {max_usages}\n"
+                    
+                    if expires_days > 0:
+                        expires_date = (datetime.now() + timedelta(days=expires_days)).strftime("%d.%m.%Y")
+                        message_text += f"📅 **Действует до:** {expires_date}\n"
+                    else:
+                        message_text += f"📅 **Срок действия:** Бессрочный\n"
+                    
+                    # Отправляем сообщение с промокодом
+                    await self.safe_send_message(
+                        chat_id=user_id,
+                        text=message_text,
+                        parse_mode="Markdown",
+                        reply_markup=KeyboardBuilder.admin_menu(config.ADMINS.get(user_id, 0))
+                    )
+                else:
+                    await self.safe_send_message(
+                        chat_id=user_id,
+                        text="❌ Не удалось создать промокод. Проверьте настройки системы промокодов.",
+                        parse_mode="Markdown",
+                        reply_markup=KeyboardBuilder.admin_menu(config.ADMINS.get(user_id, 0))
+                    )
+                
+            except ValueError:
+                await self.safe_send_message(
+                    chat_id=user_id,
+                    text="❌ Введите корректное число для срока действия",
+                    parse_mode="Markdown"
+                )
     
     async def admin_process_callback(self, call: CallbackQuery, bot: AsyncTeleBot):
         """
@@ -472,6 +616,68 @@ class AdminHandlers(BaseHandler):
                 parse_mode="Markdown",
                 reply_markup=KeyboardBuilder.admin_menu(admin_level)
             )
+            
+        elif call.data == "admin_promos":
+            # Проверяем уровень доступа
+            if admin_level < config.ADMIN_LEVEL_MODERATOR:
+                await self.bot.answer_callback_query(
+                    call.id,
+                    text="У вас недостаточно прав для управления промокодами"
+                )
+                return
+                
+            # Показываем меню управления промокодами
+            await self.show_promo_management(call)
+            
+        elif call.data == "list_promos":
+            # Показываем список промокодов
+            await self.list_promo_codes(call)
+            
+        elif call.data == "create_reports_promo":
+            # Проверяем уровень доступа для создания промокодов с количеством сносов
+            if admin_level < config.ADMIN_LEVEL_FULL:
+                await self.bot.answer_callback_query(
+                    call.id,
+                    text="У вас недостаточно прав для создания промокодов с количеством сносов"
+                )
+                return
+                
+            # Начинаем процесс создания промокода с количеством сносов
+            self.admin_states[user_id] = "create_reports_promo_count"
+            self.admin_data[user_id] = {}
+            
+            # Отправляем запрос на ввод количества сносов
+            await self.safe_edit_message(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="Создание промокода с количеством сносов\n\nВведите количество сносов для промокода:",
+                parse_mode="Markdown",
+                reply_markup=KeyboardBuilder.back_button("admin_promos")
+            )
+            
+        elif call.data == "toggle_payment_system":
+            # Проверяем уровень доступа
+            if admin_level < config.ADMIN_LEVEL_FULL:
+                await self.bot.answer_callback_query(
+                    call.id,
+                    text="У вас недостаточно прав для изменения настроек платежной системы"
+                )
+                return
+                
+            # Переключаем режим работы платежной системы
+            await self.toggle_payment_system(call)
+            
+        elif call.data == "toggle_promo_only_mode":
+            # Проверяем уровень доступа
+            if admin_level < config.ADMIN_LEVEL_FULL:
+                await self.bot.answer_callback_query(
+                    call.id,
+                    text="У вас недостаточно прав для изменения режима работы системы"
+                )
+                return
+                
+            # Переключаем режим работы только через промокоды
+            await self.toggle_promo_only_mode(call)
             
         else:
             # Неизвестный callback
@@ -610,7 +816,7 @@ class AdminHandlers(BaseHandler):
         lang = i18n.get_user_language(user_id)
         
         # Получаем список пользователей
-            users = db.get_all_users()
+        users = db.get_all_users()
         
         # Формируем текст со списком
         user_list_text = ""
@@ -812,8 +1018,8 @@ class AdminHandlers(BaseHandler):
         )
         
         # Счетчики успешных и неуспешных отправок
-            sent_count = 0
-            error_count = 0
+        sent_count = 0
+        error_count = 0
             
         # Выполняем рассылку
         for user_data in users:
@@ -826,11 +1032,11 @@ class AdminHandlers(BaseHandler):
                     chat_id=target_id,
                     text=broadcast_text,
                     parse_mode="Markdown"
-                    )
-                    sent_count += 1
-                except Exception as e:
+                )
+                sent_count += 1
+            except Exception as e:
                 logger.error(f"Ошибка при отправке сообщения пользователю {target_id}: {e}")
-                    error_count += 1
+                error_count += 1
             
             # Добавляем задержку, чтобы не превысить лимиты Telegram
             await asyncio.sleep(0.05)
@@ -850,4 +1056,220 @@ class AdminHandlers(BaseHandler):
             text=i18n.get_text("admin_broadcast_success", lang, sent_count, total_users, error_count),
                 parse_mode="Markdown", 
             reply_markup=KeyboardBuilder.admin_menu(config.ADMINS.get(user_id, 0))
-            ) 
+            )
+    
+    async def show_promo_management(self, call: CallbackQuery):
+        """
+        Показать меню управления промокодами
+        
+        Args:
+            call: Объект callback
+        """
+        user_id = call.from_user.id
+        admin_level = config.ADMINS.get(user_id, 0)
+        
+        # Формируем сообщение в зависимости от режима работы
+        is_payment_disabled = promo_manager.is_payment_disabled()
+        is_promo_only_mode = promo_manager.is_promo_only_mode()
+        
+        message_text = "🎟 **Управление промокодами**\n\n"
+        
+        if is_payment_disabled:
+            message_text += "🚫 Система обычных платежей **отключена**\n"
+        else:
+            message_text += "✅ Система обычных платежей **включена**\n"
+            
+        if is_promo_only_mode:
+            message_text += "🔒 Режим работы только через промокоды **включен**\n"
+        else:
+            message_text += "🔓 Режим работы только через промокоды **отключен**\n"
+        
+        # Получаем количество активных промокодов
+        active_promos = promo_manager.get_active_promo_codes()
+        message_text += f"\n📊 Активных промокодов: {len(active_promos)}\n"
+        
+        # Формируем клавиатуру
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        
+        # Кнопка создания обычного промокода
+        markup.add(types.InlineKeyboardButton(
+            "🎁 Создать обычный промокод",
+            callback_data="create_normal_promo"
+        ))
+        
+        # Кнопка создания промокода с количеством сносов
+        if admin_level >= config.ADMIN_LEVEL_FULL:
+            markup.add(types.InlineKeyboardButton(
+                "🔢 Создать промокод с количеством сносов",
+                callback_data="create_reports_promo"
+            ))
+        
+        # Кнопки переключения режимов работы
+        if admin_level >= config.ADMIN_LEVEL_FULL:
+            payment_button_text = "🚫 Отключить систему платежей" if not is_payment_disabled else "✅ Включить систему платежей"
+            promo_button_text = "🔒 Включить режим только промокодов" if not is_promo_only_mode else "🔓 Отключить режим только промокодов"
+            
+            markup.add(types.InlineKeyboardButton(payment_button_text, callback_data="toggle_payment_system"))
+            markup.add(types.InlineKeyboardButton(promo_button_text, callback_data="toggle_promo_only_mode"))
+        
+        # Кнопка для просмотра списка промокодов
+        markup.add(types.InlineKeyboardButton("📋 Список промокодов", callback_data="list_promos"))
+        
+        # Кнопка возврата
+        markup.add(types.InlineKeyboardButton("◀️ Назад", callback_data="admin_menu"))
+        
+        # Отправляем сообщение
+        await self.safe_edit_message(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=message_text,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+    
+    async def toggle_payment_system(self, call: CallbackQuery):
+        """
+        Переключение режима работы платежной системы
+        
+        Args:
+            call: Объект callback
+        """
+        user_id = call.from_user.id
+        
+        # Получаем текущее состояние
+        is_payment_disabled = promo_manager.is_payment_disabled()
+        
+        # Изменяем настройку в конфигурации
+        config.PROMO_SYSTEM["disable_payment_system"] = not is_payment_disabled
+        
+        # Обновляем настройку в promo_manager
+        promo_manager.disable_payment_system = not is_payment_disabled
+        
+        # Отправляем сообщение о смене режима
+        status_text = "отключена" if not is_payment_disabled else "включена"
+        
+        await self.bot.answer_callback_query(
+            call.id,
+            text=f"Система платежей {status_text}"
+        )
+        
+        # Обновляем меню
+        await self.show_promo_management(call)
+    
+    async def toggle_promo_only_mode(self, call: CallbackQuery):
+        """
+        Переключение режима работы только через промокоды
+        
+        Args:
+            call: Объект callback
+        """
+        user_id = call.from_user.id
+        
+        # Получаем текущее состояние
+        is_promo_only_mode = promo_manager.is_promo_only_mode()
+        
+        # Изменяем настройку в конфигурации
+        config.PROMO_SYSTEM["promo_only_mode"] = not is_promo_only_mode
+        
+        # Обновляем настройку в promo_manager
+        promo_manager.promo_only_mode = not is_promo_only_mode
+        
+        # Отправляем сообщение о смене режима
+        status_text = "включен" if not is_promo_only_mode else "отключен"
+        
+        await self.bot.answer_callback_query(
+            call.id,
+            text=f"Режим работы только через промокоды {status_text}"
+        )
+        
+        # Обновляем меню
+        await self.show_promo_management(call)
+    
+    async def list_promo_codes(self, call: CallbackQuery):
+        """
+        Показать список активных промокодов
+        
+        Args:
+            call: Объект callback
+        """
+        user_id = call.from_user.id
+        admin_level = config.ADMINS.get(user_id, 0)
+        
+        # Получаем список активных промокодов
+        active_promos = promo_manager.get_active_promo_codes(admin_id=user_id if admin_level < config.ADMIN_LEVEL_FULL else None)
+        
+        # Формируем текст сообщения
+        message_text = "📋 **Список активных промокодов**\n\n"
+        
+        if not active_promos:
+            message_text += "У вас нет активных промокодов."
+        else:
+            for i, promo in enumerate(active_promos[:15], 1):
+                # Базовая информация
+                promo_code = promo.get("promo_code", "")
+                discount_percent = promo.get("discount_percent", 0)
+                discount_fixed = promo.get("discount_fixed", 0)
+                subscription_days = promo.get("subscription_days", 0)
+                max_usages = promo.get("max_usages", 1)
+                current_usages = promo.get("current_usages", 0)
+                expires_at = promo.get("expires_at")
+                
+                # Информация о промокоде с количеством сносов
+                reports_count = promo.get("reports_count", 0)
+                reports_left = promo.get("reports_left", 0)
+                
+                message_text += f"{i}. `{promo_code}` - "
+                
+                # Тип промокода
+                if reports_count > 0:
+                    message_text += f"**{reports_left}/{reports_count}** сносов"
+                else:
+                    # Скидка
+                    if discount_percent > 0:
+                        message_text += f"Скидка **{discount_percent}%**"
+                    elif discount_fixed > 0:
+                        message_text += f"Скидка **${discount_fixed}**"
+                        
+                    # Дни подписки
+                    if subscription_days > 0:
+                        message_text += f", **+{subscription_days}** дней"
+                
+                # Использования
+                message_text += f" | {current_usages}/{max_usages} использований"
+                
+                # Срок действия
+                if expires_at:
+                    try:
+                        exp_date = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+                        if exp_date > datetime.now():
+                            days_left = (exp_date - datetime.now()).days
+                            message_text += f" | {days_left} дн. осталось"
+                        else:
+                            message_text += f" | истек"
+                    except:
+                        pass
+                        
+                message_text += "\n"
+            
+            # Если промокодов больше 15, добавляем примечание
+            if len(active_promos) > 15:
+                message_text += f"\n_...и еще {len(active_promos) - 15} промокодов_"
+        
+        # Формируем клавиатуру
+        markup = InlineKeyboardMarkup(row_width=1)
+        
+        # Добавляем кнопку создания промокода, если у администратора есть права
+        if admin_level >= config.ADMIN_LEVEL_FULL:
+            markup.add(InlineKeyboardButton("🔢 Создать промокод с количеством сносов", callback_data="create_reports_promo"))
+        
+        # Кнопка возврата
+        markup.add(InlineKeyboardButton("◀️ Назад", callback_data="admin_promos"))
+        
+        # Отправляем сообщение
+        await self.safe_edit_message(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=message_text,
+            parse_mode="Markdown",
+            reply_markup=markup
+        ) 
