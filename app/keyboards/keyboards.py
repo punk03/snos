@@ -27,14 +27,44 @@ def create_channel_button():
     channel_markup.add(channel)
     return channel_markup
 
-def create_admin_menu():
-    """Создает меню администратора"""
+def create_admin_menu(admin_level):
+    """
+    Создает меню администратора в зависимости от уровня доступа
+    
+    Args:
+        admin_level (int): Уровень доступа администратора
+    
+    Returns:
+        types.InlineKeyboardMarkup: Клавиатура с доступными функциями
+    """
     admin_markup = types.InlineKeyboardMarkup(row_width=2)
-    add_subsribe = types.InlineKeyboardButton("Выдать подписку", callback_data='add_subsribe')
-    clear_subscribe = types.InlineKeyboardButton("Забрать подписку", callback_data='clear_subscribe')
-    send_all = types.InlineKeyboardButton("Рассылка", callback_data='send_all')
-    admin_markup.add(add_subsribe, clear_subscribe)
-    admin_markup.add(send_all)
+    
+    # Кнопки для наблюдателей (уровень 1)
+    stats = types.InlineKeyboardButton("📊 Статистика", callback_data='admin_stats')
+    users = types.InlineKeyboardButton("👥 Список пользователей", callback_data='admin_users')
+    
+    # Кнопки для модераторов (уровень 2)
+    add_subscribe = types.InlineKeyboardButton("➕ Выдать подписку", callback_data='add_subsribe')
+    clear_subscribe = types.InlineKeyboardButton("➖ Забрать подписку", callback_data='clear_subscribe')
+    
+    # Кнопки для полных админов (уровень 3)
+    send_all = types.InlineKeyboardButton("📨 Рассылка", callback_data='send_all')
+    add_admin = types.InlineKeyboardButton("👑 Управление админами", callback_data='admin_manage')
+    system_settings = types.InlineKeyboardButton("⚙️ Настройки системы", callback_data='admin_settings')
+    
+    # Наблюдатель (уровень 1) и выше
+    if admin_level >= config.ADMIN_LEVEL_OBSERVER:
+        admin_markup.add(stats, users)
+    
+    # Модератор (уровень 2) и выше
+    if admin_level >= config.ADMIN_LEVEL_MODERATOR:
+        admin_markup.add(add_subscribe, clear_subscribe)
+    
+    # Полный админ (уровень 3)
+    if admin_level >= config.ADMIN_LEVEL_FULL:
+        admin_markup.add(send_all)
+        admin_markup.add(add_admin, system_settings)
+        
     return admin_markup
 
 def create_shop_menu():
@@ -50,6 +80,20 @@ def create_shop_menu():
     shop_markup.add(sub_4, sub_6)
     shop_markup.add(back)
     return shop_markup
+
+def create_admin_manage_menu():
+    """Создает меню управления администраторами"""
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    add_admin = types.InlineKeyboardButton("➕ Добавить админа", callback_data='add_admin')
+    edit_admin = types.InlineKeyboardButton("✏️ Изменить уровень", callback_data='edit_admin')
+    remove_admin = types.InlineKeyboardButton("❌ Удалить админа", callback_data='remove_admin')
+    list_admins = types.InlineKeyboardButton("📋 Список админов", callback_data='list_admins')
+    back = types.InlineKeyboardButton("◀️ Назад", callback_data='admin_back')
+    
+    markup.add(add_admin, edit_admin)
+    markup.add(remove_admin, list_admins)
+    markup.add(back)
+    return markup
 
 def create_payment_keyboard(pay_url, invoice_id, subscription_type, sub_days):
     """Создает клавиатуру для оплаты"""

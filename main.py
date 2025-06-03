@@ -1,14 +1,19 @@
-import logging
-import time
+"""
+Основной файл бота для массовой отправки жалоб на сообщения
+"""
 import os
-from dotenv import load_dotenv
+import asyncio
+import logging
+from datetime import datetime
 
-import telebot
+from dotenv import load_dotenv
+from telebot.async_telebot import AsyncTeleBot
 
 import config
+from app.database.db import db
 from app.handlers import register_user_handlers, register_admin_handlers
 
-# Загрузка переменных окружения (если есть .env файл)
+# Загружаем переменные окружения
 load_dotenv()
 
 # Настройка логирования
@@ -16,43 +21,43 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("bot.log"),
+        logging.FileHandler("logs/bot.log"),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
-def main():
-    """
-    Основная функция запуска бота
-    """
+# Проверяем и создаем необходимые директории
+os.makedirs("logs", exist_ok=True)
+os.makedirs(config.SESSION_FOLDER, exist_ok=True)
+
+# Устанавливаем время запуска
+config.START_TIME = datetime.now()
+
+async def main():
+    """Основная функция запуска бота"""
     logger.info("Запуск бота...")
+
+    # Инициализируем бота
+    bot = AsyncTeleBot(config.bot_token)
     
-    # Проверяем наличие папки для сессий
-    if not os.path.exists(config.SESSION_FOLDER):
-        os.makedirs(config.SESSION_FOLDER)
-        logger.info(f"Создана папка для сессий: {config.SESSION_FOLDER}")
-    
-    # Основной цикл бота с обработкой ошибок
-    while True:
-        try:
-            # Инициализация бота
-            bot = telebot.TeleBot(config.TOKEN)
-            logger.info("Бот инициализирован")
-            
-            # Регистрация обработчиков
-            register_user_handlers(bot)
-            register_admin_handlers(bot)
-            logger.info("Обработчики зарегистрированы")
-            
-            # Запуск бота
-            logger.info("Бот запущен")
-            bot.polling(none_stop=True, interval=0)
-            
-        except Exception as e:
-            logger.error(f"Произошла ошибка при работе бота: {e}")
-            time.sleep(3)
-            logger.info("Перезапуск бота...")
+    try:
+        # Регистрируем обработчики команд
+        await register_user_handlers(bot)
+        await register_admin_handlers(bot)
+        
+        logger.info("Бот успешно запущен!")
+        
+        # Запускаем бота
+        await bot.infinity_polling(timeout=10, long_polling_timeout=5)
+        
+    except Exception as e:
+        logger.critical(f"Ошибка при запуске бота: {e}")
+    finally:
+        # Закрываем соединения с БД
+        db.close()
+        logger.info("Бот остановлен")
 
 if __name__ == "__main__":
-    main() 
+    # Запускаем асинхронное приложение
+    asyncio.run(main()) 
