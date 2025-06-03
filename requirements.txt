@@ -1,0 +1,5 @@
+telethon>=1.24.0
+pyTelegramBotAPI>=4.10.0
+pyCryptoPayAPI>=1.0.0
+python-dotenv>=0.21.0
+loguru>=0.6.0 
